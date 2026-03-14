@@ -72,6 +72,7 @@ public class LotteryBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
             log.debug("Received update: {}", update);
+
         try {
             if (update.hasCallbackQuery()) {
                 handleCallback(update.getCallbackQuery());
