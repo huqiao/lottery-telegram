@@ -180,6 +180,13 @@ public class LotteryService {
         return lotteryRepository.findById(id);
     }
 
+    /**
+     * 获取所有进行中的抽奖（管理员用）
+     */
+    public List<Lottery> getAllActiveLotteries() {
+        return lotteryRepository.findByStatus(Lottery.LotteryStatus.ACTIVE);
+    }
+
     // ========== 枚举定义 ==========
 
     public enum JoinResult {

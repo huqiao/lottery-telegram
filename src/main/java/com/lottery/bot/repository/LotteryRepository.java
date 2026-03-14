@@ -27,4 +27,7 @@ public interface LotteryRepository extends JpaRepository<Lottery, Long> {
 
     // 按创建者查找
     List<Lottery> findByCreatorIdAndStatus(Long creatorId, Lottery.LotteryStatus status);
+
+    // 按状态查找所有（管理员用）
+    List<Lottery> findByStatus(Lottery.LotteryStatus status);
 }

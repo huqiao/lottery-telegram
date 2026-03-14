@@ -12,9 +12,7 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
-import org.telegram.telegrambots.meta.api.methods.pinnedmessages.PinChatMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
@@ -25,7 +23,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 import static com.lottery.bot.service.LotteryService.DrawStatus.*;
 
@@ -36,7 +33,7 @@ public class LotteryBot extends TelegramLongPollingBot {
     private final BotConfig botConfig;
     private final LotteryService lotteryService;
 
-    // 多步骤创建抽奖状态机（用户ID -> 当前步骤）
+    // 多步骤创建抽奖状态机（管理员用户ID -> 当前步骤）
     private final Map<Long, CreateLotterySession> createSessions = new ConcurrentHashMap<>();
 
     private static final DateTimeFormatter FORMATTER =
@@ -47,9 +44,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         this.botConfig = botConfig;
         this.lotteryService = lotteryService;
         log.info("LotteryBot initialized with username: {}", botConfig.getUsername());
-
     }
-
 
     @PostConstruct
     public void init() {
@@ -71,8 +66,7 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-            log.debug("Received update: {}", update);
-
+        log.debug("Received update: {}", update);
         try {
             if (update.hasCallbackQuery()) {
                 handleCallback(update.getCallbackQuery());
@@ -92,74 +86,129 @@ public class LotteryBot extends TelegramLongPollingBot {
         }
     }
 
-    // ==================== 命令处理 ====================
+    // ==================== 命令路由（区分私聊/群聊） ====================
 
     private void handleCommand(Message message) {
         String text = message.getText();
-
         String command = text.split(" ")[0].toLowerCase()
                 .replace("@" + botConfig.getUsername().toLowerCase(), "");
 
+        boolean isPrivate = isPrivateChat(message);
+        boolean isAdmin = isAdmin(message.getFrom().getId());
 
-        switch (command) {
-            case "/start", "/help" -> sendHelp(message);
-            case "/newlottery"     -> startCreateLottery(message);
-            case "/join"           -> handleJoinCommand(message);
-            case "/draw"           -> handleDrawCommand(message);
-            case "/cancel"         -> handleCancelCommand(message);
-            case "/list"           -> handleListCommand(message);
-            case "/info"           -> handleInfoCommand(message);
-            default                -> { /* 忽略未知命令 */ }
+        if (isPrivate) {
+            // 私聊命令
+            switch (command) {
+                case "/start", "/help" -> sendPrivateHelp(message, isAdmin);
+                case "/newlottery" -> {
+                    if (isAdmin) startCreateLottery(message);
+                    else sendMarkdownMessage(message.getChatId(), "此命令仅限管理员在私聊中使用。");
+                }
+                case "/draw" -> {
+                    if (isAdmin) handleDrawCommand(message);
+                    else sendMarkdownMessage(message.getChatId(), "此命令仅限管理员在私聊中使用。");
+                }
+                case "/cancel" -> {
+                    if (isAdmin) handleCancelCommand(message);
+                    else sendMarkdownMessage(message.getChatId(), "此命令仅限管理员在私聊中使用。");
+                }
+                case "/list" -> {
+                    if (isAdmin) handleListCommand(message);
+                    else sendMarkdownMessage(message.getChatId(), "此命令仅限管理员在私聊中使用。");
+                }
+                case "/lotteries" -> {
+                    if (isAdmin) handleLotteriesCommand(message);
+                    else sendMarkdownMessage(message.getChatId(), "此命令仅限管理员在私聊中使用。");
+                }
+                default -> { /* 忽略未知命令 */ }
+            }
+        } else {
+            // 群聊命令（普通用户）
+            switch (command) {
+                case "/start", "/help" -> sendGroupHelp(message);
+                case "/join" -> handleJoinCommand(message);
+                case "/info" -> handleInfoCommand(message);
+                default -> { /* 忽略未知命令 */ }
+            }
         }
     }
 
     // ==================== /help ====================
 
-    private void sendHelp(Message message) {
+    private void sendPrivateHelp(Message message, boolean isAdmin) {
+        String helpText;
+        if (isAdmin) {
+            helpText = """
+                    *== Lottery Bot 管理员控制台 ==*
+
+                    *抽奖管理命令（私聊使用）：*
+                    /newlottery \\- 在指定群组创建新抽奖
+                    /lotteries \\- 查看所有进行中的抽奖
+                    /list <ID> \\- 查看指定抽奖的参与者列表
+                    /draw <ID> \\- 立即开奖
+                    /cancel <ID> \\- 取消抽奖
+
+                    *使用流程：*
+                    1\\. 私聊发送 /newlottery，按提示填写抽奖信息
+                    2\\. 输入目标群组 ID，机器人将在群内发布抽奖公告
+                    3\\. 群内用户点击按钮参与抽奖
+                    4\\. 私聊发送 /draw <ID> 开奖
+
+                    _机器人版本: v2\\.0\\.0_
+                    """;
+        } else {
+            helpText = """
+                    *== Lottery Bot 抽奖机器人 ==*
+
+                    请前往群组参与抽奖活动！
+
+                    *群内用户命令：*
+                    /join \\- 参与当前抽奖
+                    /info \\- 查看当前抽奖信息
+
+                    _机器人版本: v2\\.0\\.0_
+                    """;
+        }
+        sendMarkdownV2Message(message.getChatId(), helpText);
+    }
+
+    private void sendGroupHelp(Message message) {
         String helpText = """
                 *== Lottery Bot 抽奖机器人 ==*
 
                 *用户命令：*
-                /newlottery - 创建新抽奖
                 /join - 参与当前抽奖
-                /list - 查看参与者列表
                 /info - 查看当前抽奖信息
 
-                *管理员/创建者命令：*
-                /draw [ID] - 立即开奖（可指定ID）
-                /cancel [ID] - 取消抽奖
-
-                *使用流程：*
-                1. 发送 /newlottery 开始创建抽奖
-                2. 按提示输入抽奖标题、奖品、人数等
-                3. 用户点击 *[参与抽奖]* 按钮报名
-                4. 发送 /draw 开奖，机器人随机选取获奖者
-
-                _机器人版本: v1.0.0_
+                _等待管理员创建抽奖活动后，点击参与按钮或发送 /join 即可报名！_
                 """;
-
         sendMarkdownMessage(message.getChatId(), helpText);
     }
 
-    // ==================== 创建抽奖（状态机） ====================
+    // ==================== 创建抽奖（管理员私聊，状态机） ====================
 
     private void startCreateLottery(Message message) {
         Long userId = message.getFrom().getId();
-        Long chatId = message.getChatId();
+        Long adminChatId = message.getChatId();
 
-        // 初始化会话
         CreateLotterySession session = new CreateLotterySession();
-        session.chatId = chatId;
+        session.adminChatId = adminChatId;
         session.creatorId = userId;
         session.creatorName = getFullName(message.getFrom());
-        session.step = CreateStep.TITLE;
+        session.step = CreateStep.GROUP_ID;
         createSessions.put(userId, session);
 
-        sendMarkdownMessage(chatId,
-                "*[创建抽奖]* 第 1/5 步\n\n请输入抽奖 *标题*：\n\n_例如：双十一大抽奖_");
+        sendMarkdownMessage(adminChatId,
+                "*[创建抽奖]* 第 1/6 步\n\n请输入目标 *群组 ID*：\n\n" +
+                "_获取方法：将机器人添加到目标群组，然后转发一条群消息给 @userinfobot 获取群 ID（通常为负数，例如：\\-1001234567890）_");
     }
 
     private void handleTextInput(Message message) {
+        // 只处理私聊中的文字输入（管理员创建抽奖）
+        if (!isPrivateChat(message)) {
+            return;
+        }
+
         Long userId = message.getFrom().getId();
         CreateLotterySession session = createSessions.get(userId);
         if (session == null) {
@@ -169,17 +218,29 @@ public class LotteryBot extends TelegramLongPollingBot {
         String input = message.getText().trim();
 
         switch (session.step) {
+            case GROUP_ID -> {
+                try {
+                    long groupId = Long.parseLong(input.replace(" ", ""));
+                    session.targetChatId = groupId;
+                    session.step = CreateStep.TITLE;
+                    sendMarkdownMessage(session.adminChatId,
+                            "*[创建抽奖]* 第 2/6 步\n\n请输入抽奖 *标题*：\n\n_例如：双十一大抽奖_");
+                } catch (NumberFormatException e) {
+                    sendMarkdownMessage(session.adminChatId,
+                            "群组 ID 格式错误，请输入正确的群组 ID（例如：-1001234567890）：");
+                }
+            }
             case TITLE -> {
                 session.title = input;
                 session.step = CreateStep.PRIZE;
-                sendMarkdownMessage(message.getChatId(),
-                        "*[创建抽奖]* 第 2/5 步\n\n请输入 *奖品描述*：\n\n_例如：iPhone 16 Pro x1_");
+                sendMarkdownMessage(session.adminChatId,
+                        "*[创建抽奖]* 第 3/6 步\n\n请输入 *奖品描述*：\n\n_例如：iPhone 16 Pro x1_");
             }
             case PRIZE -> {
                 session.prize = input;
                 session.step = CreateStep.WINNER_COUNT;
-                sendMarkdownMessage(message.getChatId(),
-                        "*[创建抽奖]* 第 3/5 步\n\n请输入 *获奖名额数量*（数字）：\n\n_例如：3_");
+                sendMarkdownMessage(session.adminChatId,
+                        "*[创建抽奖]* 第 4/6 步\n\n请输入 *获奖名额数量*（数字）：\n\n_例如：3_");
             }
             case WINNER_COUNT -> {
                 try {
@@ -189,19 +250,19 @@ public class LotteryBot extends TelegramLongPollingBot {
                     }
                     session.winnerCount = count;
                     session.step = CreateStep.DESCRIPTION;
-                    sendMarkdownMessage(message.getChatId(),
-                            "*[创建抽奖]* 第 4/5 步\n\n请输入 *抽奖说明*（可选，输入 \"无\" 跳过）：");
+                    sendMarkdownMessage(session.adminChatId,
+                            "*[创建抽奖]* 第 5/6 步\n\n请输入 *抽奖说明*（可选，输入 \"无\" 跳过）：");
                 } catch (NumberFormatException e) {
-                    sendMarkdownMessage(message.getChatId(),
+                    sendMarkdownMessage(session.adminChatId,
                             "请输入 1-100 之间的有效数字，重新输入获奖名额：");
                 }
             }
             case DESCRIPTION -> {
                 session.description = input.equals("无") ? "" : input;
                 session.step = CreateStep.END_TIME;
-                sendMarkdownMessage(message.getChatId(),
+                sendMarkdownMessage(session.adminChatId,
                         """
-                        *[创建抽奖]* 第 5/5 步
+                        *[创建抽奖]* 第 6/6 步
 
                         请输入 *截止时间*（可选）：
                         - 格式：`yyyy-MM-dd HH:mm`（例如：2026-12-31 20:00）
@@ -214,12 +275,12 @@ public class LotteryBot extends TelegramLongPollingBot {
                     try {
                         endTime = LocalDateTime.parse(input, FORMATTER);
                         if (endTime.isBefore(LocalDateTime.now())) {
-                            sendMarkdownMessage(message.getChatId(),
+                            sendMarkdownMessage(session.adminChatId,
                                     "截止时间不能早于当前时间，请重新输入：");
                             return;
                         }
                     } catch (Exception e) {
-                        sendMarkdownMessage(message.getChatId(),
+                        sendMarkdownMessage(session.adminChatId,
                                 "时间格式错误，请按 `yyyy-MM-dd HH:mm` 格式输入，或输入 `无`：");
                         return;
                     }
@@ -233,7 +294,7 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     private void finishCreateLottery(CreateLotterySession session) {
         Lottery lottery = lotteryService.createLottery(
-                session.chatId,
+                session.targetChatId,
                 session.creatorId,
                 session.creatorName,
                 session.title,
@@ -243,9 +304,10 @@ public class LotteryBot extends TelegramLongPollingBot {
                 session.endTime
         );
 
+        // 在目标群组发布抽奖公告
         String announcement = buildLotteryAnnouncement(lottery, 0);
         SendMessage msg = SendMessage.builder()
-                .chatId(session.chatId.toString())
+                .chatId(session.targetChatId.toString())
                 .text(announcement)
                 .parseMode(ParseMode.MARKDOWN)
                 .replyMarkup(buildJoinKeyboard(lottery.getId()))
@@ -253,16 +315,27 @@ public class LotteryBot extends TelegramLongPollingBot {
 
         try {
             Message sent = execute(msg);
-            // 保存消息ID
             lottery.setMessageId(sent.getMessageId());
-            // 更新到数据库（通过service再次保存）
-            log.info("Lottery announcement sent, messageId={}", sent.getMessageId());
+            log.info("Lottery announcement sent to group {}, messageId={}", session.targetChatId, sent.getMessageId());
         } catch (TelegramApiException e) {
-            log.error("Failed to send lottery announcement", e);
+            log.error("Failed to send lottery announcement to group {}", session.targetChatId, e);
+            sendMarkdownMessage(session.adminChatId,
+                    "*[错误]* 无法发送公告到群组 `" + session.targetChatId +
+                    "`，请确认机器人已加入该群组并有发言权限。\n抽奖 ID：`" + lottery.getId() + "`");
+            return;
         }
+
+        // 通知管理员创建成功
+        sendMarkdownMessage(session.adminChatId,
+                "*[创建成功]* 抽奖已发布到群组！\n\n" +
+                "*抽奖标题：*" + escapeMarkdown(lottery.getTitle()) + "\n" +
+                "*抽奖 ID：*`" + lottery.getId() + "`\n" +
+                "*目标群组：*`" + session.targetChatId + "`\n\n" +
+                "使用 `/draw " + lottery.getId() + "` 开奖\n" +
+                "使用 `/cancel " + lottery.getId() + "` 取消抽奖");
     }
 
-    // ==================== 参与抽奖 ====================
+    // ==================== 群内参与抽奖 ====================
 
     private void handleJoinCommand(Message message) {
         Long chatId = message.getChatId();
@@ -302,62 +375,65 @@ public class LotteryBot extends TelegramLongPollingBot {
         sendMarkdownMessage(chatId, response);
     }
 
-    // ==================== 开奖 ====================
+    // ==================== 开奖（管理员私聊） ====================
 
     private void handleDrawCommand(Message message) {
-        Long chatId = message.getChatId();
-        Long userId = message.getFrom().getId();
-        boolean isAdmin = userId.equals(botConfig.getAdminId());
+        Long adminChatId = message.getChatId();
 
-        // 解析命令参数（/draw 或 /draw 123）
-        Long lotteryId = null;
         String[] parts = message.getText().split(" ");
-        if (parts.length > 1) {
-            try {
-                lotteryId = Long.parseLong(parts[1]);
-            } catch (NumberFormatException e) {
-                sendMarkdownMessage(chatId, "抽奖 ID 格式错误，请输入数字。");
-                return;
-            }
+        if (parts.length < 2) {
+            sendMarkdownMessage(adminChatId,
+                    "请指定抽奖 ID：`/draw <抽奖ID>`\n\n使用 /lotteries 查看所有进行中的抽奖。");
+            return;
         }
 
-        if (lotteryId == null) {
-            Optional<Lottery> active = lotteryService.getActiveLottery(chatId);
-            if (active.isEmpty()) {
-                sendMarkdownMessage(chatId, "当前没有进行中的抽奖活动。");
-                return;
-            }
-            lotteryId = active.get().getId();
+        Long lotteryId;
+        try {
+            lotteryId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            sendMarkdownMessage(adminChatId, "抽奖 ID 格式错误，请输入数字。");
+            return;
         }
 
-        // 权限检查
         Lottery lottery = lotteryService.getLotteryById(lotteryId).orElse(null);
         if (lottery == null) {
-            sendMarkdownMessage(chatId, "未找到该抽奖活动。");
-            return;
-        }
-        if (!isAdmin && !lottery.getCreatorId().equals(userId)) {
-            sendMarkdownMessage(chatId, "只有抽奖创建者或管理员才能执行开奖操作。");
+            sendMarkdownMessage(adminChatId, "未找到该抽奖活动。");
             return;
         }
 
-        executeDraw(chatId, lotteryId);
+        executeDraw(lottery.getChatId(), lotteryId, adminChatId);
     }
 
-    private void executeDraw(Long chatId, Long lotteryId) {
-        // 发送开奖动画消息
-        sendMarkdownMessage(chatId, "*正在开奖中... 请稍候*");
+    private void executeDraw(Long groupChatId, Long lotteryId, Long adminChatId) {
+        sendMarkdownMessage(groupChatId, "*正在开奖中... 请稍候*");
 
         LotteryService.DrawResult result = lotteryService.drawLottery(lotteryId, null);
 
-        String response = switch (result.status) {
-            case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners);
-            case NO_PARTICIPANTS -> "没有人参与本次抽奖，抽奖结束。";
-            case ALREADY_DRAWN -> "该抽奖已经开奖过了。";
-            case NOT_FOUND -> "未找到该抽奖活动。";
-        };
-
-        sendMarkdownMessage(chatId, response);
+        switch (result.status) {
+            case SUCCESS -> {
+                String resultMsg = buildDrawResultMessage(result.lottery, result.winners);
+                sendMarkdownMessage(groupChatId, resultMsg);
+                if (adminChatId != null) {
+                    sendMarkdownMessage(adminChatId, "*开奖成功！* 结果已发送至群组。");
+                }
+            }
+            case NO_PARTICIPANTS -> {
+                sendMarkdownMessage(groupChatId, "没有人参与本次抽奖，抽奖结束。");
+                if (adminChatId != null) {
+                    sendMarkdownMessage(adminChatId, "开奖完成：无人参与。");
+                }
+            }
+            case ALREADY_DRAWN -> {
+                if (adminChatId != null) {
+                    sendMarkdownMessage(adminChatId, "该抽奖已经开奖过了。");
+                }
+            }
+            case NOT_FOUND -> {
+                if (adminChatId != null) {
+                    sendMarkdownMessage(adminChatId, "未找到该抽奖活动。");
+                }
+            }
+        }
     }
 
     private String buildDrawResultMessage(Lottery lottery, List<Participant> winners) {
@@ -387,62 +463,85 @@ public class LotteryBot extends TelegramLongPollingBot {
         return sb.toString();
     }
 
-    // ==================== 取消抽奖 ====================
+    // ==================== 取消抽奖（管理员私聊） ====================
 
     private void handleCancelCommand(Message message) {
-        Long chatId = message.getChatId();
+        Long adminChatId = message.getChatId();
         Long userId = message.getFrom().getId();
-        boolean isAdmin = userId.equals(botConfig.getAdminId());
+        boolean isAdmin = isAdmin(userId);
 
-        Long lotteryId = null;
         String[] parts = message.getText().split(" ");
-        if (parts.length > 1) {
-            try {
-                lotteryId = Long.parseLong(parts[1]);
-            } catch (NumberFormatException e) {
-                sendMarkdownMessage(chatId, "抽奖 ID 格式错误。");
-                return;
-            }
-        } else {
-            Optional<Lottery> active = lotteryService.getActiveLottery(chatId);
-            if (active.isEmpty()) {
-                sendMarkdownMessage(chatId, "当前没有进行中的抽奖。");
-                return;
-            }
-            lotteryId = active.get().getId();
-        }
-
-        boolean cancelled = lotteryService.cancelLottery(lotteryId, userId, isAdmin);
-        if (cancelled) {
-            sendMarkdownMessage(chatId, "*抽奖已成功取消。*");
-        } else {
-            sendMarkdownMessage(chatId, "取消失败：你可能没有权限或抽奖已结束。");
-        }
-    }
-
-    // ==================== 查看列表 ====================
-
-    private void handleListCommand(Message message) {
-        Long chatId = message.getChatId();
-        Optional<Lottery> active = lotteryService.getActiveLottery(chatId);
-
-        if (active.isEmpty()) {
-            sendMarkdownMessage(chatId, "当前没有进行中的抽奖。");
+        if (parts.length < 2) {
+            sendMarkdownMessage(adminChatId,
+                    "请指定抽奖 ID：`/cancel <抽奖ID>`\n\n使用 /lotteries 查看所有进行中的抽奖。");
             return;
         }
 
-        Lottery lottery = active.get();
-        List<Participant> participants = lotteryService.getParticipants(lottery.getId());
+        Long lotteryId;
+        try {
+            lotteryId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            sendMarkdownMessage(adminChatId, "抽奖 ID 格式错误，请输入数字。");
+            return;
+        }
+
+        Lottery lottery = lotteryService.getLotteryById(lotteryId).orElse(null);
+        if (lottery == null) {
+            sendMarkdownMessage(adminChatId, "未找到该抽奖活动。");
+            return;
+        }
+
+        Long groupChatId = lottery.getChatId();
+        String lotteryTitle = lottery.getTitle();
+
+        boolean cancelled = lotteryService.cancelLottery(lotteryId, userId, isAdmin);
+        if (cancelled) {
+            sendMarkdownMessage(adminChatId, "*抽奖已成功取消。*");
+            sendMarkdownMessage(groupChatId,
+                    "*[系统通知]* 抽奖「" + escapeMarkdown(lotteryTitle) + "」已被取消。");
+        } else {
+            sendMarkdownMessage(adminChatId, "取消失败：你可能没有权限或抽奖已结束。");
+        }
+    }
+
+    // ==================== 查看参与者列表（管理员私聊） ====================
+
+    private void handleListCommand(Message message) {
+        Long adminChatId = message.getChatId();
+
+        String[] parts = message.getText().split(" ");
+        if (parts.length < 2) {
+            sendMarkdownMessage(adminChatId,
+                    "请指定抽奖 ID：`/list <抽奖ID>`\n\n使用 /lotteries 查看所有进行中的抽奖。");
+            return;
+        }
+
+        Long lotteryId;
+        try {
+            lotteryId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            sendMarkdownMessage(adminChatId, "抽奖 ID 格式错误，请输入数字。");
+            return;
+        }
+
+        Lottery lottery = lotteryService.getLotteryById(lotteryId).orElse(null);
+        if (lottery == null) {
+            sendMarkdownMessage(adminChatId, "未找到该抽奖活动。");
+            return;
+        }
+
+        List<Participant> participants = lotteryService.getParticipants(lotteryId);
 
         StringBuilder sb = new StringBuilder();
         sb.append("*== 参与者列表 ==*\n");
         sb.append("*抽奖：*").append(escapeMarkdown(lottery.getTitle())).append("\n");
+        sb.append("*状态：*").append(lottery.getStatus().name()).append("\n");
         sb.append("*总人数：*").append(participants.size()).append(" 人\n\n");
 
         if (participants.isEmpty()) {
             sb.append("_暂无人参与_");
         } else {
-            for (int i = 0; i < participants.size(); i++) {
+            for (int i = 0; i < Math.min(participants.size(), 50); i++) {
                 Participant p = participants.get(i);
                 sb.append(i + 1).append(". ");
                 if (p.getUsername() != null && !p.getUsername().isEmpty()) {
@@ -451,18 +550,47 @@ public class LotteryBot extends TelegramLongPollingBot {
                     sb.append(escapeMarkdown(p.getFullName()));
                 }
                 sb.append("\n");
-                // 避免消息过长
-                if (i >= 49) {
-                    sb.append("... 等 ").append(participants.size()).append(" 人");
-                    break;
-                }
+            }
+            if (participants.size() > 50) {
+                sb.append("... 等 ").append(participants.size()).append(" 人");
             }
         }
 
-        sendMarkdownMessage(chatId, sb.toString());
+        sendMarkdownMessage(adminChatId, sb.toString());
     }
 
-    // ==================== 查看抽奖信息 ====================
+    // ==================== 查看所有抽奖（管理员私聊） ====================
+
+    private void handleLotteriesCommand(Message message) {
+        Long adminChatId = message.getChatId();
+        List<Lottery> lotteries = lotteryService.getAllActiveLotteries();
+
+        if (lotteries.isEmpty()) {
+            sendMarkdownMessage(adminChatId, "当前没有进行中的抽奖活动。");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("*== 进行中的抽奖 ==*\n\n");
+
+        for (Lottery l : lotteries) {
+            sb.append("*ID：*`").append(l.getId()).append("`\n");
+            sb.append("*标题：*").append(escapeMarkdown(l.getTitle())).append("\n");
+            sb.append("*奖品：*").append(escapeMarkdown(l.getPrize())).append("\n");
+            sb.append("*群组：*`").append(l.getChatId()).append("`\n");
+            sb.append("*参与人数：*").append(lotteryService.getParticipantCount(l.getId())).append(" 人\n");
+            if (l.getEndTime() != null) {
+                sb.append("*截止：*").append(l.getEndTime().format(FORMATTER)).append("\n");
+            } else {
+                sb.append("*截止：*手动开奖\n");
+            }
+            sb.append("\\-\\-\\-\n");
+        }
+
+        sendMarkdownMessage(adminChatId, sb.toString());
+    }
+
+    // ==================== 群内查看抽奖信息 ====================
 
     private void handleInfoCommand(Message message) {
         Long chatId = message.getChatId();
@@ -491,7 +619,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         }
     }
 
-    // ==================== Callback 处理 ====================
+    // ==================== Callback 处理（群内点击参与按钮） ====================
 
     private void handleCallback(CallbackQuery callbackQuery) {
         String data = callbackQuery.getData();
@@ -521,13 +649,21 @@ public class LotteryBot extends TelegramLongPollingBot {
         for (Lottery lottery : expired) {
             log.info("Auto-drawing expired lottery: {}", lottery.getId());
             sendMarkdownMessage(lottery.getChatId(),
-                    "*[系统提示]* 抽奖 \"" + escapeMarkdown(lottery.getTitle()) +
-                    "\" 已到截止时间，自动开奖中...");
-            executeDraw(lottery.getChatId(), lottery.getId());
+                    "*[系统提示]* 抽奖「" + escapeMarkdown(lottery.getTitle()) +
+                    "」已到截止时间，自动开奖中...");
+            executeDraw(lottery.getChatId(), lottery.getId(), null);
         }
     }
 
     // ==================== 工具方法 ====================
+
+    private boolean isPrivateChat(Message message) {
+        return "private".equals(message.getChat().getType());
+    }
+
+    private boolean isAdmin(Long userId) {
+        return userId.equals(botConfig.getAdminId());
+    }
 
     private String buildLotteryAnnouncement(Lottery lottery, int participantCount) {
         StringBuilder sb = new StringBuilder();
@@ -556,7 +692,7 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     private InlineKeyboardMarkup buildJoinKeyboard(Long lotteryId) {
         InlineKeyboardButton joinBtn = InlineKeyboardButton.builder()
-                .text("参与抽奖")
+                .text("🎉 参与抽奖")
                 .callbackData("join:" + lotteryId)
                 .build();
 
@@ -575,6 +711,19 @@ public class LotteryBot extends TelegramLongPollingBot {
             execute(msg);
         } catch (TelegramApiException e) {
             log.error("Failed to send message to chat {}: {}", chatId, e.getMessage());
+        }
+    }
+
+    private void sendMarkdownV2Message(Long chatId, String text) {
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(text)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .build();
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send MarkdownV2 message to chat {}: {}", chatId, e.getMessage());
         }
     }
 
@@ -599,7 +748,8 @@ public class LotteryBot extends TelegramLongPollingBot {
     // ==================== 会话模型 ====================
 
     private static class CreateLotterySession {
-        Long chatId;
+        Long adminChatId;    // 管理员的私聊 ID
+        Long targetChatId;   // 目标群组 ID
         Long creatorId;
         String creatorName;
         String title;
@@ -611,6 +761,6 @@ public class LotteryBot extends TelegramLongPollingBot {
     }
 
     private enum CreateStep {
-        TITLE, PRIZE, WINNER_COUNT, DESCRIPTION, END_TIME
+        GROUP_ID, TITLE, PRIZE, WINNER_COUNT, DESCRIPTION, END_TIME
     }
 }
