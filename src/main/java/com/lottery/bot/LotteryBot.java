@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.pinnedmessages.PinChatMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -19,8 +20,10 @@ import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiRequestException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
+import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -41,6 +44,8 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    private static final int MAX_RETRIES = 3;
 
     public LotteryBot(BotConfig botConfig, LotteryService lotteryService) {
         super(botConfig.getToken());
@@ -252,7 +257,7 @@ public class LotteryBot extends TelegramLongPollingBot {
                 .build();
 
         try {
-            Message sent = execute(msg);
+            Message sent = executeWithRetry(msg);
             // 保存消息ID
             lottery.setMessageId(sent.getMessageId());
             // 更新到数据库（通过service再次保存）
@@ -485,7 +490,7 @@ public class LotteryBot extends TelegramLongPollingBot {
                 .build();
 
         try {
-            execute(msg);
+            executeWithRetry(msg);
         } catch (TelegramApiException e) {
             log.error("Failed to send info message", e);
         }
@@ -505,7 +510,7 @@ public class LotteryBot extends TelegramLongPollingBot {
 
         // 应答 callback，避免按钮转圈
         try {
-            execute(org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery.builder()
+            executeWithRetry(org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery.builder()
                     .callbackQueryId(callbackQuery.getId())
                     .build());
         } catch (TelegramApiException e) {
@@ -572,10 +577,32 @@ public class LotteryBot extends TelegramLongPollingBot {
                 .parseMode(ParseMode.MARKDOWN)
                 .build();
         try {
-            execute(msg);
+            executeWithRetry(msg);
         } catch (TelegramApiException e) {
             log.error("Failed to send message to chat {}: {}", chatId, e.getMessage());
         }
+    }
+
+    private <T extends Serializable> T executeWithRetry(BotApiMethod<T> method) throws TelegramApiException {
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return execute(method);
+            } catch (TelegramApiRequestException e) {
+                if (e.getErrorCode() != 429 || attempt == MAX_RETRIES) {
+                    throw e;
+                }
+                Integer retryAfter = e.getParameters() != null ? e.getParameters().getRetryAfter() : null;
+                long delayMs = retryAfter != null ? retryAfter * 1000L : (1000L << attempt);
+                log.warn("Telegram rate limit reached, retrying in {}ms (attempt {}/{})", delayMs, attempt + 1, MAX_RETRIES);
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw new TelegramApiException("Max retries exceeded");
     }
 
     private String getFullName(User user) {
