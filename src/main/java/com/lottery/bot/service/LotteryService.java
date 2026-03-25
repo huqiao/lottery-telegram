@@ -180,6 +180,17 @@ public class LotteryService {
         return lotteryRepository.findById(id);
     }
 
+    public List<Lottery> getAllLotteries() {
+        return lotteryRepository.findAll();
+    }
+
+    @Transactional
+    public void deleteLottery(Long id) {
+        lotteryRepository.deleteById(id);
+        participantRepository.deleteByLotteryId(id);
+        log.info("Deleted lottery [{}]", id);
+    }
+
     // ========== 枚举定义 ==========
 
     public enum JoinResult {

@@ -22,4 +22,7 @@ public interface ParticipantRepository extends JpaRepository<Participant, Long> 
 
     // 统计参与人数
     long countByLotteryId(Long lotteryId);
+
+    // 删除指定抽奖的所有参与者
+    void deleteByLotteryId(Long lotteryId);
 }
