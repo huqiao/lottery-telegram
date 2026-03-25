@@ -47,7 +47,20 @@ public class LotteryBot extends TelegramLongPollingBot {
         this.botConfig = botConfig;
         this.lotteryService = lotteryService;
         log.info("LotteryBot initialized with username: {}", botConfig.getUsername());
+    }
+    // ==================== 群聊权限验证 ====================
 
+
+    private boolean isAdminGroup(Long chatId) {
+        return botConfig.getAdminGroupId() != null && botConfig.getAdminGroupId().equals(chatId);
+    }
+
+    private boolean isLotteryGroup(Long chatId) {
+        return botConfig.getLotteryGroupIds().contains(chatId);
+    }
+
+    private boolean isPrivateChat(Long chatId) {
+        return chatId > 0;
     }
 
 
@@ -100,16 +113,61 @@ public class LotteryBot extends TelegramLongPollingBot {
         String command = text.split(" ")[0].toLowerCase()
                 .replace("@" + botConfig.getUsername().toLowerCase(), "");
 
+        Long chatId = message.getChatId();
+        Long userId = message.getFrom().getId();
 
+        // 验证群聊权限
         switch (command) {
+            case "/newlottery" -> {
+                // 只能在管理群或私聊中使用
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "创建抽奖只能在管理群或私聊中使用。");
+                    return;
+                }
+                startCreateLottery(message);
+            }
+            case "/join" -> {
+                // 只能在抽奖群中使用
+                if (!isLotteryGroup(chatId)) {
+                    sendMarkdownMessage(chatId, "参与抽奖只能在抽奖群中使用。");
+                    return;
+                }
+                handleJoinCommand(message);
+            }
+            case "/draw" -> {
+                // 开奖只能在管理群或私聊中使用
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "开奖操作只能在管理群或私聊中使用。");
+                    return;
+                }
+                handleDrawCommand(message);
+            }
+            case "/cancel" -> {
+                // 取消抽奖只能在管理群或私聊中使用
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "取消抽奖只能在管理群或私聊中使用。");
+                    return;
+                }
+                handleCancelCommand(message);
+            }
+            case "/list" -> {
+                // 查看列表只能在抽奖群中使用
+                if (!isLotteryGroup(chatId)) {
+                    sendMarkdownMessage(chatId, "查看参与者列表只能在抽奖群中使用。");
+                    return;
+                }
+                handleListCommand(message);
+            }
+            case "/info" -> {
+                // 查看信息只能在抽奖群中使用
+                if (!isLotteryGroup(chatId)) {
+                    sendMarkdownMessage(chatId, "查看抽奖信息只能在抽奖群中使用。");
+                    return;
+                }
+                handleInfoCommand(message);
+            }
             case "/start", "/help" -> sendHelp(message);
-            case "/newlottery"     -> startCreateLottery(message);
-            case "/join"           -> handleJoinCommand(message);
-            case "/draw"           -> handleDrawCommand(message);
-            case "/cancel"         -> handleCancelCommand(message);
-            case "/list"           -> handleListCommand(message);
-            case "/info"           -> handleInfoCommand(message);
-            default                -> { /* 忽略未知命令 */ }
+            default -> { /* 忽略未知命令 */ }
         }
     }
 
@@ -244,21 +302,35 @@ public class LotteryBot extends TelegramLongPollingBot {
         );
 
         String announcement = buildLotteryAnnouncement(lottery, 0);
+        InlineKeyboardMarkup keyboard = buildJoinKeyboard(lottery.getId());
+
+        // 在管理群发送公告
+        sendLotteryToGroup(session.chatId, announcement, keyboard);
+
+        // 在所有抽奖群发送公告并置顶
+        for (Long groupId : botConfig.getLotteryGroupIds()) {
+            sendLotteryToGroup(groupId, announcement, keyboard);
+        }
+    }
+
+    private void sendLotteryToGroup(Long chatId, String announcement, InlineKeyboardMarkup keyboard) {
         SendMessage msg = SendMessage.builder()
-                .chatId(session.chatId.toString())
+                .chatId(chatId.toString())
                 .text(announcement)
                 .parseMode(ParseMode.MARKDOWN)
-                .replyMarkup(buildJoinKeyboard(lottery.getId()))
+                .replyMarkup(keyboard)
                 .build();
 
         try {
             Message sent = execute(msg);
-            // 保存消息ID
-            lottery.setMessageId(sent.getMessageId());
-            // 更新到数据库（通过service再次保存）
-            log.info("Lottery announcement sent, messageId={}", sent.getMessageId());
+            log.info("Lottery announcement sent to chat {}, messageId={}", chatId, sent.getMessageId());
+
+            // 在抽奖群置顶消息
+            if (botConfig.getLotteryGroupIds().contains(chatId)) {
+                pinLotteryMessage(chatId, sent.getMessageId());
+            }
         } catch (TelegramApiException e) {
-            log.error("Failed to send lottery announcement", e);
+            log.error("Failed to send lottery announcement to chat {}: {}", chatId, e.getMessage());
         }
     }
 
@@ -345,7 +417,6 @@ public class LotteryBot extends TelegramLongPollingBot {
     }
 
     private void executeDraw(Long chatId, Long lotteryId) {
-        // 发送开奖动画消息
         sendMarkdownMessage(chatId, "*正在开奖中... 请稍候*");
 
         LotteryService.DrawResult result = lotteryService.drawLottery(lotteryId, null);
@@ -358,6 +429,10 @@ public class LotteryBot extends TelegramLongPollingBot {
         };
 
         sendMarkdownMessage(chatId, response);
+
+        for (Long groupId : botConfig.getLotteryGroupIds()) {
+            sendMarkdownMessage(groupId, response);
+        }
     }
 
     private String buildDrawResultMessage(Lottery lottery, List<Participant> winners) {
@@ -575,6 +650,19 @@ public class LotteryBot extends TelegramLongPollingBot {
             execute(msg);
         } catch (TelegramApiException e) {
             log.error("Failed to send message to chat {}: {}", chatId, e.getMessage());
+        }
+    }
+
+    private void pinLotteryMessage(Long chatId, Integer messageId) {
+        try {
+            PinChatMessage pin = PinChatMessage.builder()
+                    .chatId(chatId.toString())
+                    .messageId(messageId)
+                    .build();
+            execute(pin);
+            log.info("Pinned lottery message: chatId={}, messageId={}", chatId, messageId);
+        } catch (TelegramApiException e) {
+            log.error("Failed to pin message: {}", e.getMessage());
         }
     }
 

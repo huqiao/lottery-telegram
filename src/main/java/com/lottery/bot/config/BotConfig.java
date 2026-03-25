@@ -12,6 +12,10 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
+
+import java.util.ArrayList;
+import java.util.List;
+
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "telegram.bot")
@@ -21,6 +25,8 @@ public class BotConfig {
     private String token;
     private String username;
     private Long adminId;
+    private Long adminGroupId;
+    private List<Long> lotteryGroupIds = new ArrayList<>();
 
 
 //    @Bean
