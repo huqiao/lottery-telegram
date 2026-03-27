@@ -22,6 +22,8 @@ public class BotConfig {
     private Long adminId;
     private Long adminGroupId;
     private String lotteryGroupIds;
+    private String lotteryGroupLanguages;
+    private String language = "zh";
 
     public List<Long> getLotteryGroupIds() {
         if (lotteryGroupIds == null || lotteryGroupIds.isEmpty()) {
@@ -32,5 +34,19 @@ public class BotConfig {
                 .filter(s -> !s.isEmpty())
                 .map(Long::parseLong)
                 .collect(Collectors.toList());
+    }
+
+    public String getGroupLanguage(Long groupId) {
+        if (lotteryGroupLanguages == null || lotteryGroupLanguages.isEmpty()) {
+            return language;
+        }
+        String[] langConfigs = lotteryGroupLanguages.split(",");
+        for (String config : langConfigs) {
+            String[] parts = config.trim().split(":");
+            if (parts.length == 2 && Long.parseLong(parts[0].trim()) == groupId) {
+                return parts[1].trim();
+            }
+        }
+        return language;
     }
 }

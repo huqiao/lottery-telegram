@@ -62,6 +62,9 @@ public class Lottery {
     @Column(name = "message_id")
     private Integer messageId;      // 公告消息 ID（用于置顶/更新）
 
+     @Column(name = "prize_distributed")
+     private boolean prizeDistributed;  // 奖项是否已发放
+
     public enum LotteryStatus {
         ACTIVE,    // 进行中
         DRAWN,     // 已开奖

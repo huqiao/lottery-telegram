@@ -191,6 +191,16 @@ public class LotteryService {
         log.info("Deleted lottery [{}]", id);
     }
 
+    @Transactional
+    public void setPrizeDistributed(Long lotteryId, boolean distributed) {
+        Lottery lottery = lotteryRepository.findById(lotteryId).orElse(null);
+        if (lottery != null) {
+            lottery.setPrizeDistributed(distributed);
+            lotteryRepository.save(lottery);
+            log.info("Lottery [{}] prize distributed set to {}", lotteryId, distributed);
+        }
+    }
+
     // ========== 枚举定义 ==========
 
     public enum JoinResult {
