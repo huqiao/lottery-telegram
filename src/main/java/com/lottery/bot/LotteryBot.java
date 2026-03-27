@@ -3,8 +3,10 @@ package com.lottery.bot;
 
 import com.lottery.bot.config.BotConfig;
 import com.lottery.bot.model.Lottery;
+import com.lottery.bot.model.LotteryTemplate;
 import com.lottery.bot.model.Participant;
 import com.lottery.bot.service.LotteryService;
+import com.lottery.bot.service.LotteryTemplateService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,17 +37,20 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     private final BotConfig botConfig;
     private final LotteryService lotteryService;
+    private final LotteryTemplateService templateService;
 
     // 多步骤创建抽奖状态机（用户ID -> 当前步骤）
     private final Map<Long, CreateLotterySession> createSessions = new ConcurrentHashMap<>();
+    private final Map<Long, EditTemplateSession> editTemplateSessions = new ConcurrentHashMap<>();
 
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
-    public LotteryBot(BotConfig botConfig, LotteryService lotteryService) {
+    public LotteryBot(BotConfig botConfig, LotteryService lotteryService, LotteryTemplateService templateService) {
         super(botConfig.getToken());
         this.botConfig = botConfig;
         this.lotteryService = lotteryService;
+        this.templateService = templateService;
         log.info("LotteryBot initialized with username: {}", botConfig.getUsername());
     }
     // ==================== 群聊权限验证 ====================
@@ -120,10 +125,45 @@ public class LotteryBot extends TelegramLongPollingBot {
         switch (command) {
             case "/newlottery" -> {
                 if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
-                    sendMarkdownMessage(chatId, "创建抽奖只能在管理群或私聊中使用。");
+                    sendMarkdownMessage(chatId, "创建抽奖模板只能在管理群或私聊中使用。");
                     return;
                 }
                 startCreateLottery(message);
+            }
+            case "/tpl", "/template" -> {
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "创建抽奖模板只能在管理群或私聊中使用。");
+                    return;
+                }
+                startCreateTemplate(message);
+            }
+            case "/tpllist" -> {
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "该命令只能在管理群或私聊中使用。");
+                    return;
+                }
+                handleTemplateListCommand(message);
+            }
+            case "/tpledit" -> {
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "编辑模板只能在管理群或私聊中使用。");
+                    return;
+                }
+                startEditTemplate(message);
+            }
+            case "/tpldel" -> {
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "删除模板只能在管理群或私聊中使用。");
+                    return;
+                }
+                handleDeleteTemplateCommand(message);
+            }
+            case "/startlottery" -> {
+                if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
+                    sendMarkdownMessage(chatId, "开启抽奖只能在管理群或私聊中使用。");
+                    return;
+                }
+                handleStartLotteryCommand(message);
             }
             case "/lotterylist" -> {
                 if (!isAdminGroup(chatId) && !isPrivateChat(chatId)) {
@@ -188,7 +228,13 @@ public class LotteryBot extends TelegramLongPollingBot {
                 }
                 handleInfoCommand(message);
             }
-            case "/start", "/help" -> sendHelp(message);
+            case "/start", "/help" -> {
+                if (isPrivateChat(message.getChatId())) {
+                    sendMainMenu(message);
+                } else {
+                    sendHelp(message);
+                }
+            }
             default -> { /* 忽略未知命令 */ }
         }
     }
@@ -199,10 +245,16 @@ public class LotteryBot extends TelegramLongPollingBot {
         String helpText = """
                 *== Lottery Bot 抽奖机器人 ==*
 
-                *管理命令（在管理群或私聊中使用）：*
-                /newlottery - 创建新抽奖
+                *模板管理（在管理群或私聊中使用）：*
+                /tpl - 创建抽奖模板
+                /tpllist - 查看模板列表
+                /tpledit [ID] - 编辑模板
+                /tpldel [ID] - 删除模板
+
+                *抽奖管理（在管理群或私聊中使用）：*
+                /startlottery [模板ID] - 开启抽奖（使用模板创建抽奖）
                 /lotterylist - 查看抽奖列表
-                /activate [ID] - 激活指定抽奖（推送到所有抽奖群并置顶）
+                /activate [ID] - 激活指定抽奖（推送到抽奖群并置顶）
                 /deactivate - 停用当前抽奖（取消置顶）
                 /delete [ID] - 删除抽奖
                 /draw [ID] - 立即开奖（可指定ID）
@@ -214,16 +266,505 @@ public class LotteryBot extends TelegramLongPollingBot {
                 /info - 查看当前抽奖信息
 
                 *使用流程：*
-                1. 在管理群发送 /newlottery 创建抽奖
-                2. 按提示输入抽奖标题、奖品、人数等
+                1. 使用 /tpl 创建抽奖模板
+                2. 使用 /startlottery [模板ID] 开启抽奖
                 3. 使用 /activate [ID] 激活抽奖，推送到抽奖群
                 4. 用户在抽奖群点击 *参与抽奖* 按钮报名
-                5. 在管理群发送 /draw 开奖，机器人随机选取获奖者
+                5. 使用 /draw 开奖，机器人随机选取获奖者
 
-                _机器人版本: v1.2.0_
+                _机器人版本: v1.3.0_
                 """;
 
         sendMarkdownMessage(message.getChatId(), helpText);
+    }
+
+    private void sendMainMenu(Message message) {
+        String menuText = """
+                *🎯 Lottery Bot 主菜单*
+
+                请选择功能类别：
+
+                📋 *模板管理*
+                创建、编辑、删除抽奖模板
+
+                🎁 *抽奖管理*
+                开启、激活、开奖抽奖活动
+
+                👥 *用户功能*
+                参与抽奖、查看信息
+                """;
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("📋 模板管理")
+                                        .callbackData("menu_template")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("🎁 抽奖管理")
+                                        .callbackData("menu_lottery")
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("👥 用户功能")
+                                        .callbackData("menu_user")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("ℹ️ 帮助说明")
+                                        .callbackData("menu_help")
+                                        .build()
+                        )
+                )
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(message.getChatId().toString())
+                .text(menuText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送主菜单失败", e);
+        }
+    }
+
+    private void sendTemplateMenu(Long chatId) {
+        String menuText = """
+                *📋 模板管理*
+
+                请选择操作：
+                """;
+
+        // 获取所有模板
+        List<LotteryTemplate> templates = templateService.getAllTemplates();
+
+        List<List<InlineKeyboardButton>> keyboard = new ArrayList<>();
+
+        // 顶部按钮：创建模板和刷新列表
+        keyboard.add(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🆕 创建模板")
+                        .callbackData("cmd_tpl")
+                        .build(),
+                InlineKeyboardButton.builder()
+                        .text("🔄 刷新列表")
+                        .callbackData("cmd_tpllist")
+                        .build()
+        ));
+
+        // 中间：所有模板列表（每行最多两个按钮）
+        for (int i = 0; i < templates.size(); i += 2) {
+            List<InlineKeyboardButton> row = new ArrayList<>();
+            LotteryTemplate template = templates.get(i);
+            row.add(InlineKeyboardButton.builder()
+                    .text(template.getId() + ". " + escapeMarkdown(template.getTitle()))
+                    .callbackData("tpl_detail:" + template.getId())
+                    .build());
+
+            if (i + 1 < templates.size()) {
+                LotteryTemplate nextTemplate = templates.get(i + 1);
+                row.add(InlineKeyboardButton.builder()
+                        .text(nextTemplate.getId() + ". " + escapeMarkdown(nextTemplate.getTitle()))
+                        .callbackData("tpl_detail:" + nextTemplate.getId())
+                        .build());
+            }
+            keyboard.add(row);
+        }
+
+        // 底部：返回主菜单按钮
+        keyboard.add(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ 返回主菜单")
+                        .callbackData("main_menu")
+                        .build()
+        ));
+
+        InlineKeyboardMarkup markup = InlineKeyboardMarkup.builder()
+                .keyboard(keyboard)
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(menuText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(markup)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送模板菜单失败", e);
+        }
+    }
+
+    private void sendLotteryMenu(Long chatId) {
+        String menuText = """
+                *🎁 抽奖管理菜单*
+
+                请选择抽奖操作：
+
+                • /startlottery [模板ID] —— 开启抽奖
+                • /lotterylist —— 查看抽奖列表
+                • /activate [ID] —— 激活抽奖
+                • /deactivate —— 停用当前抽奖
+                • /delete [ID] —— 删除抽奖
+                • /draw [ID] —— 立即开奖
+                • /cancel [ID] —— 取消抽奖
+                """;
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("🚀 开启抽奖")
+                                        .callbackData("cmd_startlottery")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("📋 抽奖列表")
+                                        .callbackData("cmd_lotterylist")
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("📡 激活抽奖")
+                                        .callbackData("cmd_activate")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("⏹️ 停用抽奖")
+                                        .callbackData("cmd_deactivate")
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("开奖")
+                                        .callbackData("cmd_draw")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("🗑️ 删除抽奖")
+                                        .callbackData("cmd_delete")
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("⬅️ 返回主菜单")
+                                        .callbackData("main_menu")
+                                        .build()
+                        )
+                )
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(menuText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送抽奖菜单失败", e);
+        }
+    }
+
+    private void sendUserMenu(Long chatId) {
+        String menuText = """
+                *👥 用户功能菜单*
+
+                请选择用户功能：
+
+                • /join —— 参与当前抽奖
+                • /list —— 查看参与者列表
+                • /info —— 查看当前抽奖信息
+                """;
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("🎉 参与抽奖")
+                                        .callbackData("cmd_join")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("👥 查看参与者")
+                                        .callbackData("cmd_list")
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("ℹ️ 抽奖信息")
+                                        .callbackData("cmd_info")
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("⬅️ 返回主菜单")
+                                        .callbackData("main_menu")
+                                        .build()
+                        )
+                )
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(menuText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送用户菜单失败", e);
+        }
+    }
+
+    private void handleCallbackQuery(CallbackQuery callbackQuery) {
+        String data = callbackQuery.getData();
+        Long chatId = callbackQuery.getMessage().getChatId();
+        String callbackId = callbackQuery.getId();
+
+        try {
+            if (data.startsWith("tpl_list")) {
+                sendTemplateListMenu(chatId);
+            } else if (data.startsWith("tpl_detail:")) {
+                Long templateId = Long.parseLong(data.substring(11));
+                sendTemplateDetailMenu(chatId, templateId);
+            } else if (data.startsWith("tpl_edit:")) {
+                Long templateId = Long.parseLong(data.substring(9));
+                // 直接开始编辑模板交互
+                Message message = callbackQuery.getMessage();
+                Message newMessage = new Message();
+                newMessage.setChat(message.getChat());
+                newMessage.setText("/tpledit " + templateId);
+                newMessage.setFrom(callbackQuery.getFrom());
+                startEditTemplate(newMessage);
+            } else if (data.startsWith("tpl_del:")) {
+                Long templateId = Long.parseLong(data.substring(8));
+                templateService.deleteTemplate(templateId, callbackQuery.getFrom().getId(),
+                        callbackQuery.getFrom().getId().equals(botConfig.getAdminId()));
+                sendMarkdownMessage(chatId, "模板已删除！");
+                sendTemplateListMenu(chatId);
+            } else {
+                switch (data) {
+                    case "main_menu" -> sendMainMenu(callbackQuery.getMessage());
+                    case "menu_template" -> sendTemplateMenu(chatId);
+                    case "menu_lottery" -> sendLotteryMenu(chatId);
+                    case "menu_user" -> sendUserMenu(chatId);
+                    case "menu_help" -> sendHelp(callbackQuery.getMessage());
+                    case "cmd_tpl" -> {
+                        // 从回调查询中获取用户信息并触发创建模板
+                        Message message = callbackQuery.getMessage();
+                        Message newMessage = new Message();
+                        newMessage.setChat(message.getChat());
+                        newMessage.setText("/tpl");
+                        newMessage.setFrom(callbackQuery.getFrom());
+                        startCreateTemplate(newMessage);
+                    }
+                    case "cmd_tpllist" -> {
+                        sendTemplateMenu(chatId);
+                    }
+                    case "cmd_tpledit" -> {
+                        sendMarkdownMessage(chatId, "请使用 /tpledit [ID] 命令编辑模板");
+                        sendTemplateMenu(chatId);
+                    }
+                    case "cmd_tpldel" -> {
+                        sendMarkdownMessage(chatId, "请使用 /tpldel [ID] 命令删除模板");
+                        sendTemplateMenu(chatId);
+                    }
+                    case "cmd_startlottery" -> {
+                        sendMarkdownMessage(chatId, "请使用 /startlottery [模板ID] 命令开启抽奖");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_lotterylist" -> {
+                        sendMarkdownMessage(chatId, "请使用 /lotterylist 命令查看抽奖列表");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_activate" -> {
+                        sendMarkdownMessage(chatId, "请使用 /activate [ID] 命令激活抽奖");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_deactivate" -> {
+                        sendMarkdownMessage(chatId, "请使用 /deactivate 命令停用当前抽奖");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_draw" -> {
+                        sendMarkdownMessage(chatId, "请使用 /draw [ID] 命令开奖");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_delete" -> {
+                        sendMarkdownMessage(chatId, "请使用 /delete [ID] 命令删除抽奖");
+                        sendLotteryMenu(chatId);
+                    }
+                    case "cmd_join" -> {
+                        sendMarkdownMessage(chatId, "请使用 /join 命令参与抽奖");
+                        sendUserMenu(chatId);
+                    }
+                    case "cmd_list" -> {
+                        sendMarkdownMessage(chatId, "请使用 /list 命令查看参与者");
+                        sendUserMenu(chatId);
+                    }
+                    case "cmd_info" -> {
+                        sendMarkdownMessage(chatId, "请使用 /info 命令查看抽奖信息");
+                        sendUserMenu(chatId);
+                    }
+                    default -> {
+                        sendMarkdownMessage(chatId, "未知命令: " + data);
+                    }
+                }
+            }
+
+            // 回应回调查询
+            execute(org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery
+                    .builder()
+                    .callbackQueryId(callbackId)
+                    .text("")
+                    .build());
+
+        } catch (TelegramApiException e) {
+            log.error("处理回调查询失败", e);
+        }
+    }
+
+    private void sendTemplateListMenu(Long chatId) {
+        List<LotteryTemplate> templates = templateService.getAllTemplates();
+
+        if (templates.isEmpty()) {
+            sendMarkdownMessage(chatId, "目前没有任何抽奖模板。\n\n使用 /tpl 创建新模板。");
+            sendTemplateMenu(chatId);
+            return;
+        }
+
+        String menuText = """
+                *📋 模板列表*
+
+                请选择要查看的模板：
+                """;
+
+        // 每行最多显示两个模板按钮
+        List<List<InlineKeyboardButton>> keyboard = new ArrayList<>();
+        for (int i = 0; i < templates.size(); i += 2) {
+            List<InlineKeyboardButton> row = new ArrayList<>();
+            LotteryTemplate template = templates.get(i);
+            row.add(InlineKeyboardButton.builder()
+                    .text(template.getId() + ". " + escapeMarkdown(template.getTitle()))
+                    .callbackData("tpl_detail:" + template.getId())
+                    .build());
+
+            if (i + 1 < templates.size()) {
+                LotteryTemplate nextTemplate = templates.get(i + 1);
+                row.add(InlineKeyboardButton.builder()
+                        .text(nextTemplate.getId() + ". " + escapeMarkdown(nextTemplate.getTitle()))
+                        .callbackData("tpl_detail:" + nextTemplate.getId())
+                        .build());
+            }
+            keyboard.add(row);
+        }
+
+        // 添加返回按钮
+        keyboard.add(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ 返回模板菜单")
+                        .callbackData("menu_template")
+                        .build()
+        ));
+
+        InlineKeyboardMarkup markup = InlineKeyboardMarkup.builder()
+                .keyboard(keyboard)
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(menuText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(markup)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送模板列表失败", e);
+        }
+    }
+
+    private void sendTemplateDetailMenu(Long chatId, Long templateId) {
+        Optional<LotteryTemplate> optTemplate = templateService.getTemplateById(templateId);
+        if (optTemplate.isEmpty()) {
+            sendMarkdownMessage(chatId, "未找到该模板。");
+            sendTemplateListMenu(chatId);
+            return;
+        }
+
+        LotteryTemplate template = optTemplate.get();
+
+        String detailText = String.format("""
+                *📄 模板详情*
+
+                *ID:* %d
+                *标题:* %s
+                *奖品:* %s
+                *人数:* %d人
+                *说明:* %s
+                *默认时长:* %s
+                *创建者:* %s
+                """,
+                template.getId(),
+                escapeMarkdown(template.getTitle()),
+                escapeMarkdown(template.getPrize() != null ? template.getPrize() : "未设置"),
+                template.getWinnerCount(),
+                escapeMarkdown(template.getDescription() != null ? template.getDescription() : "无"),
+                template.getDefaultEndHours() != null ? template.getDefaultEndHours() + "小时" : "无",
+                escapeMarkdown(template.getCreatorName())
+        );
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("✏️ 修改模板")
+                                        .callbackData("tpl_edit:" + templateId)
+                                        .build(),
+                                InlineKeyboardButton.builder()
+                                        .text("🗑️ 删除模板")
+                                        .callbackData("tpl_del:" + templateId)
+                                        .build()
+                        )
+                )
+                .keyboardRow(
+                        List.of(
+                                InlineKeyboardButton.builder()
+                                        .text("⬅️ 返回模板管理")
+                                        .callbackData("menu_template")
+                                        .build()
+                        )
+                )
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(detailText)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("发送模板详情失败", e);
+        }
     }
 
     // ==================== 创建抽奖（状态机） ====================
@@ -247,10 +788,16 @@ public class LotteryBot extends TelegramLongPollingBot {
     private void handleTextInput(Message message) {
         Long userId = message.getFrom().getId();
         CreateLotterySession session = createSessions.get(userId);
-        if (session == null) {
-            return;
-        }
+        EditTemplateSession editSession = editTemplateSessions.get(userId);
 
+        if (session != null) {
+            handleCreateLotteryInput(message, session, userId);
+        } else if (editSession != null) {
+            handleEditTemplateInput(message, editSession, userId);
+        }
+    }
+
+    private void handleCreateLotteryInput(Message message, CreateLotterySession session, Long userId) {
         String input = message.getText().trim();
 
         switch (session.step) {
@@ -312,6 +859,92 @@ public class LotteryBot extends TelegramLongPollingBot {
                 session.endTime = endTime;
                 createSessions.remove(userId);
                 finishCreateLottery(session);
+            }
+        }
+    }
+
+    private void handleEditTemplateInput(Message message, EditTemplateSession session, Long userId) {
+        String input = message.getText().trim();
+        Long chatId = message.getChatId();
+
+        switch (session.step) {
+            case TITLE -> {
+                if (!input.equals("无")) {
+                    session.title = input;
+                }
+                session.step = EditTemplateStep.PRIZE;
+                sendMarkdownMessage(chatId,
+                        "*[编辑模板]* \n\n请输入奖品描述（直接发送保持不变，输入 \"无\" 跳过）：");
+            }
+            case PRIZE -> {
+                if (!input.equals("无")) {
+                    session.prize = input;
+                }
+                session.step = EditTemplateStep.WINNER_COUNT;
+                sendMarkdownMessage(chatId,
+                        "*[编辑模板]* \n\n请输入获奖名额数量（直接发送保持不变）：");
+            }
+            case WINNER_COUNT -> {
+                if (!input.equals("无")) {
+                    try {
+                        int count = Integer.parseInt(input);
+                        if (count >= 1 && count <= 100) {
+                            session.winnerCount = count;
+                        }
+                    } catch (NumberFormatException e) {
+                        sendMarkdownMessage(chatId, "格式错误，保持原值。");
+                    }
+                }
+                session.step = EditTemplateStep.DESCRIPTION;
+                sendMarkdownMessage(chatId,
+                        "*[编辑模板]* \n\n请输入抽奖说明（直接发送保持不变，输入 \"无\" 跳过）：");
+            }
+            case DESCRIPTION -> {
+                if (!input.equals("无")) {
+                    session.description = input;
+                }
+                session.step = EditTemplateStep.END_HOURS;
+                sendMarkdownMessage(chatId,
+                        "*[编辑模板]* \n\n请输入默认截止时长（小时，直接发送保持不变，输入 \"无\" 跳过）：");
+            }
+            case END_HOURS -> {
+                if (!input.equals("无")) {
+                    try {
+                        int hours = Integer.parseInt(input);
+                        if (hours > 0) {
+                            session.defaultEndHours = hours;
+                        }
+                    } catch (NumberFormatException e) {
+                        sendMarkdownMessage(chatId, "格式错误，保持原值。");
+                    }
+                }
+                editTemplateSessions.remove(userId);
+
+                if (session.templateId==null){
+                    templateService.createTemplate(
+                            session.userId,
+                            session.userId.toString(),
+                            session.title,
+                            session.description,
+                            session.prize,
+                            session.winnerCount,
+                            session.defaultEndHours
+                    );
+                }else{
+                    templateService.updateTemplate(
+                            session.templateId,
+                            session.userId,
+                            session.isAdmin,
+                            session.title,
+                            session.description,
+                            session.prize,
+                            session.winnerCount,
+                            session.defaultEndHours
+                    );
+
+                }
+
+                sendMarkdownMessage(chatId, "*模板已更新！*");
             }
         }
     }
@@ -672,6 +1305,171 @@ public class LotteryBot extends TelegramLongPollingBot {
         sendMarkdownMessage(chatId, "*抽奖已删除。*");
     }
 
+    // ==================== 模板管理 ====================
+
+    private void startCreateTemplate(Message message) {
+        Long userId = message.getFrom().getId();
+        Long chatId = message.getChatId();
+
+        EditTemplateSession session = new EditTemplateSession();
+        session.userId = userId;
+//        session.chatId = chatId;
+        session.isAdmin = userId.equals(botConfig.getAdminId());
+        session.step = EditTemplateStep.TITLE;
+        editTemplateSessions.put(userId, session);
+
+        sendMarkdownMessage(chatId,
+                "*[创建抽奖模板]* 第 1/5 步\n\n请输入模板 *标题*：\n\n_例如：每日福利抽奖_");
+    }
+
+    private void startEditTemplate(Message message) {
+        Long userId = message.getFrom().getId();
+        Long chatId = message.getChatId();
+
+        String[] parts = message.getText().split(" ");
+        if (parts.length < 2) {
+            sendMarkdownMessage(chatId, "请指定要编辑的模板 ID，如：/tpledit 1");
+            return;
+        }
+
+        try {
+            Long templateId = Long.parseLong(parts[1]);
+            Optional<LotteryTemplate> optTemplate = templateService.getTemplateById(templateId);
+            if (optTemplate.isEmpty()) {
+                sendMarkdownMessage(chatId, "未找到该模板。");
+                return;
+            }
+
+            LotteryTemplate template = optTemplate.get();
+            boolean isAdmin = userId.equals(botConfig.getAdminId());
+            if (!isAdmin && !template.getCreatorId().equals(userId)) {
+                sendMarkdownMessage(chatId, "只有模板创建者或管理员才能编辑模板。");
+                return;
+            }
+
+            EditTemplateSession session = new EditTemplateSession();
+            session.templateId = templateId;
+            session.userId = userId;
+            session.isAdmin = isAdmin;
+            session.title = template.getTitle();
+            session.prize = template.getPrize();
+            session.winnerCount = template.getWinnerCount();
+            session.description = template.getDescription();
+            session.defaultEndHours = template.getDefaultEndHours();
+            session.step = EditTemplateStep.TITLE;
+            editTemplateSessions.put(userId, session);
+
+            sendMarkdownMessage(chatId,
+                    "*[编辑抽奖模板 ID:" + templateId + "]*\n\n当前标题: " + escapeMarkdown(template.getTitle()) + "\n\n请输入新标题（直接发送保持不变）：");
+        } catch (NumberFormatException e) {
+            sendMarkdownMessage(chatId, "模板 ID 格式错误。");
+        }
+    }
+
+    private void handleTemplateListCommand(Message message) {
+        Long chatId = message.getChatId();
+        List<LotteryTemplate> templates = templateService.getAllTemplates();
+
+        if (templates.isEmpty()) {
+            sendMarkdownMessage(chatId, "目前没有任何抽奖模板。\n\n使用 /tpl 创建新模板。");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("*== 抽奖模板列表 ==*\n\n");
+
+        for (LotteryTemplate t : templates) {
+            sb.append("• *ID:").append(t.getId()).append("*\n");
+            sb.append("  标题: ").append(escapeMarkdown(t.getTitle())).append("\n");
+            sb.append("  奖品: ").append(escapeMarkdown(t.getPrize() != null ? t.getPrize() : "未设置")).append("\n");
+            sb.append("  人数: ").append(t.getWinnerCount()).append("人\n");
+            if (t.getDefaultEndHours() != null) {
+                sb.append("  默认时长: ").append(t.getDefaultEndHours()).append("小时\n");
+            }
+            sb.append("  创建者: ").append(escapeMarkdown(t.getCreatorName())).append("\n\n");
+        }
+
+        sb.append("使用 /startlottery [ID] 开启抽奖");
+        sendMarkdownMessage(chatId, sb.toString());
+    }
+
+    private void handleDeleteTemplateCommand(Message message) {
+        Long chatId = message.getChatId();
+        Long userId = message.getFrom().getId();
+        boolean isAdmin = userId.equals(botConfig.getAdminId());
+
+        Long templateId = null;
+        String[] parts = message.getText().split(" ");
+        if (parts.length > 1) {
+            try {
+                templateId = Long.parseLong(parts[1]);
+            } catch (NumberFormatException e) {
+                sendMarkdownMessage(chatId, "模板 ID 格式错误。");
+                return;
+            }
+        }
+
+        if (templateId == null) {
+            sendMarkdownMessage(chatId, "请指定要删除的模板 ID，如：/tpldel 1");
+            return;
+        }
+
+        boolean deleted = templateService.deleteTemplate(templateId, userId, isAdmin);
+        if (deleted) {
+            sendMarkdownMessage(chatId, "*模板已删除。*");
+        } else {
+            sendMarkdownMessage(chatId, "删除失败：你可能没有权限。");
+        }
+    }
+
+    private void handleStartLotteryCommand(Message message) {
+        Long chatId = message.getChatId();
+        Long userId = message.getFrom().getId();
+        boolean isAdmin = userId.equals(botConfig.getAdminId());
+
+        String[] parts = message.getText().split(" ");
+        if (parts.length < 2) {
+            sendMarkdownMessage(chatId, "请指定模板 ID，如：/startlottery 1");
+            return;
+        }
+
+        try {
+            Long templateId = Long.parseLong(parts[1]);
+            Optional<LotteryTemplate> optTemplate = templateService.getTemplateById(templateId);
+            if (optTemplate.isEmpty()) {
+                sendMarkdownMessage(chatId, "未找到该模板。");
+                return;
+            }
+
+            LotteryTemplate template = optTemplate.get();
+
+            int endHours = template.getDefaultEndHours() != null ? template.getDefaultEndHours() : 24;
+            LocalDateTime endTime = LocalDateTime.now().plusHours(endHours);
+
+            Lottery lottery = lotteryService.createLottery(
+                    chatId,
+                    userId,
+                    getFullName(message.getFrom()),
+                    template.getTitle(),
+                    template.getPrize(),
+                    template.getWinnerCount(),
+                    template.getDescription(),
+                    endTime
+            );
+
+            sendMarkdownMessage(chatId,
+                    "*抽奖已创建！*\n\n" +
+                    "抽奖 ID: " + lottery.getId() + "\n" +
+                    "标题: " + escapeMarkdown(lottery.getTitle()) + "\n" +
+                    "奖品: " + escapeMarkdown(lottery.getPrize()) + "\n" +
+                    "人数: " + lottery.getWinnerCount() + "人\n" +
+                    "截止: " + lottery.getEndTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))  + "\n\n" +
+                    "使用 /activate " + lottery.getId() + " 激活并推送到抽奖群");
+        } catch (NumberFormatException e) {
+            sendMarkdownMessage(chatId, "模板 ID 格式错误。");
+        }
+    }
+
     private void handleListCommand(Message message) {
         Long chatId = message.getChatId();
         Optional<Lottery> active = lotteryService.getActiveLottery(chatId);
@@ -751,6 +1549,8 @@ public class LotteryBot extends TelegramLongPollingBot {
         if (data.startsWith("join:")) {
             Long lotteryId = Long.parseLong(data.substring(5));
             processJoin(chatId, lotteryId, user);
+        } else {
+            handleCallbackQuery(callbackQuery);
         }
 
         // 应答 callback，避免按钮转圈
@@ -875,5 +1675,21 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     private enum CreateStep {
         TITLE, PRIZE, WINNER_COUNT, DESCRIPTION, END_TIME
+    }
+
+    private static class EditTemplateSession {
+        Long templateId;
+        Long userId;
+        boolean isAdmin;
+        String title;
+        String prize;
+        int winnerCount;
+        String description;
+        Integer defaultEndHours;
+        EditTemplateStep step;
+    }
+
+    private enum EditTemplateStep {
+        TEMPLATE_ID, TITLE, PRIZE, WINNER_COUNT, DESCRIPTION, END_HOURS
     }
 }
