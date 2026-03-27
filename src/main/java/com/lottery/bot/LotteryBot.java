@@ -1291,10 +1291,11 @@ public class LotteryBot extends TelegramLongPollingBot {
             return;
         }
 
-        processJoin(chatId, activeLottery.get().getId(), message.getFrom(), message.getMessageId());
+        String language = botConfig.getGroupLanguage(chatId);
+        processJoin(chatId, activeLottery.get().getId(), message.getFrom(), message.getMessageId(), language);
     }
 
-    private void processJoin(Long chatId, Long lotteryId, User user, Integer replyToMessageId) {
+    private void processJoin(Long chatId, Long lotteryId, User user, Integer replyToMessageId, String language) {
         try {
             LotteryService.JoinResult result = lotteryService.joinLottery(
                     lotteryId,
@@ -1304,19 +1305,19 @@ public class LotteryBot extends TelegramLongPollingBot {
             );
 
             String userMention = getUserMention(user);
-            String response = switch (result) {
-                case SUCCESS ->
-                        userMention + " *已成功参与抽奖！* 🎉\n当前编号：" +
-                        lotteryService.getParticipantCount(lotteryId);
-                case ALREADY_JOINED ->
-                        userMention + " 你已经参与过这次抽奖了，不可重复参与。";
-                case LOTTERY_ENDED ->
-                        userMention + " 该抽奖已结束，无法参与。";
-                case LOTTERY_EXPIRED ->
-                        userMention + " 该抽奖已过截止时间，无法参与。";
-                case NOT_FOUND ->
-                        userMention + " 未找到该抽奖活动。";
+            String response;
+            String key = switch (result) {
+                case SUCCESS -> "join_success";
+                case ALREADY_JOINED -> "join_already";
+                case LOTTERY_ENDED -> "join_ended";
+                case LOTTERY_EXPIRED -> "join_expired";
+                case NOT_FOUND -> "join_not_found";
             };
+            if (result == LotteryService.JoinResult.SUCCESS) {
+                response = userMention + " " + localizationService.get(key, language, lotteryService.getParticipantCount(lotteryId));
+            } else {
+                response = userMention + " " + localizationService.get(key, language);
+            }
 
             if (replyToMessageId != null) {
                 sendReplyMessage(chatId, response, replyToMessageId);
@@ -1327,7 +1328,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         } catch (Exception e) {
             log.error("Error processing join request for lottery [{}] by user [{}]", lotteryId, user.getId(), e);
             try {
-                sendMarkdownMessage(chatId, "❌ 参与抽奖时发生错误，请稍后重试。");
+                sendMarkdownMessage(chatId, "❌ " + localizationService.get("join_error", language));
             } catch (Exception ex) {
                 log.error("Failed to send error message to chat [{}]", chatId, ex);
             }
@@ -1398,15 +1399,16 @@ public class LotteryBot extends TelegramLongPollingBot {
     }
 
     private void executeDraw(Long chatId, Long lotteryId) {
-        sendMarkdownMessage(chatId, "*正在开奖中... 请稍候*");
+        String language = botConfig.getGroupLanguage(chatId);
+        sendMarkdownMessage(chatId, localizationService.get("draw_in_progress", language));
 
         LotteryService.DrawResult result = lotteryService.drawLottery(lotteryId, null);
 
         String response = switch (result.status) {
-            case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners);
-            case NO_PARTICIPANTS -> "没有人参与本次抽奖，抽奖结束。";
-            case ALREADY_DRAWN -> "该抽奖已经开奖过了。";
-            case NOT_FOUND -> "未找到该抽奖活动。";
+            case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, language);
+            case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", language);
+            case ALREADY_DRAWN -> localizationService.get("already_drawn", language);
+            case NOT_FOUND -> localizationService.get("lottery_not_found", language);
         };
 
         sendMarkdownMessage(chatId, response);
@@ -1414,7 +1416,14 @@ public class LotteryBot extends TelegramLongPollingBot {
         unpinAllLotteryGroups();
 
         for (Long groupId : botConfig.getLotteryGroupIds()) {
-            sendMarkdownMessage(groupId, response);
+            String groupLanguage = botConfig.getGroupLanguage(groupId);
+            String groupResponse = switch (result.status) {
+                case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, groupLanguage);
+                case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", groupLanguage);
+                case ALREADY_DRAWN -> localizationService.get("already_drawn", groupLanguage);
+                case NOT_FOUND -> localizationService.get("lottery_not_found", groupLanguage);
+            };
+            sendMarkdownMessage(groupId, groupResponse);
         }
     }
 
@@ -1441,17 +1450,17 @@ public class LotteryBot extends TelegramLongPollingBot {
         }
     }
 
-    private String buildDrawResultMessage(Lottery lottery, List<Participant> winners) {
+    private String buildDrawResultMessage(Lottery lottery, List<Participant> winners, String language) {
         StringBuilder sb = new StringBuilder();
-        sb.append("*== 开奖结果公告 ==*\n\n");
-        sb.append("*抽奖名称：*").append(escapeMarkdown(lottery.getTitle())).append("\n");
-        sb.append("*奖品：*").append(escapeMarkdown(lottery.getPrize())).append("\n");
-        sb.append("*开奖时间：*").append(lottery.getDrawnAt().format(FORMATTER)).append("\n\n");
+        sb.append(localizationService.get("draw_result_title", language)).append("\n\n");
+        sb.append(localizationService.get("lottery_name", language)).append(escapeMarkdown(lottery.getTitle())).append("\n");
+        sb.append(localizationService.get("draw_prize", language)).append(escapeMarkdown(lottery.getPrize())).append("\n");
+        sb.append(localizationService.get("draw_time", language)).append(lottery.getDrawnAt().format(FORMATTER)).append("\n\n");
 
         if (winners.isEmpty()) {
-            sb.append("_没有参与者，无获奖者_");
+            sb.append(localizationService.get("no_winners_text", language));
         } else {
-            sb.append("*恭喜以下用户获奖！*\n");
+            sb.append(localizationService.get("winners_label", language)).append("\n");
             for (int i = 0; i < winners.size(); i++) {
                 Participant w = winners.get(i);
                 sb.append(i + 1).append(". ");
@@ -1464,7 +1473,7 @@ public class LotteryBot extends TelegramLongPollingBot {
             }
         }
 
-        sb.append("\n_感谢所有参与者！_");
+        sb.append("\n_").append(localizationService.get("congratulations", language)).append("_");
         return sb.toString();
     }
 
@@ -2068,7 +2077,8 @@ public class LotteryBot extends TelegramLongPollingBot {
         try {
             if (data.startsWith("join:")) {
                 Long lotteryId = Long.parseLong(data.substring(5));
-                processJoin(chatId, lotteryId, user, null);
+                String language = botConfig.getGroupLanguage(chatId);
+                processJoin(chatId, lotteryId, user, null, language);
             } else {
                 handleCallbackQuery(callbackQuery);
             }

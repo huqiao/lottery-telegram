@@ -39,10 +39,7 @@ telegram:
     admin-group-id: -5174196716  # 管理群 ID（创建抽奖等管理操作）
     lottery-group-ids: -1003411668361,-5104092101  # 抽奖群 ID（多个用逗号分隔，如：-100123,-100456,-100789）
     language: zh                              # 默认语言
-    lottery-group-languages: |               # 各群语言设置（格式：群ID:语言）
-      -1003411668361: zh
-      -5104092101: en
-      111222333: uz
+    lottery-group-languages: '-1003411668361:zh,-5104092101:en,111222333:uz'         # 各群语言设置（格式：群ID:语言）
 logging:
   level:
     root: INFO
