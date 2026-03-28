@@ -176,6 +176,10 @@ public class LotteryService {
         return lotteryRepository.findExpiredLotteries(LocalDateTime.now());
     }
 
+    public List<Lottery> getAllActiveLotteries() {
+        return lotteryRepository.findByStatus(Lottery.LotteryStatus.ACTIVE);
+    }
+
     public Optional<Lottery> getLotteryById(Long id) {
         return lotteryRepository.findById(id);
     }
