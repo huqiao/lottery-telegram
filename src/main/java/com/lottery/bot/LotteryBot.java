@@ -1589,7 +1589,7 @@ public class LotteryBot extends TelegramLongPollingBot {
             case NOT_FOUND -> localizationService.get("lottery_not_found", language);
         };
 
-        sendMarkdownMessage(chatId, response);
+        sendHtmlMessage(chatId, response);
 
         unpinAllLotteryGroups();
 
@@ -1601,7 +1601,7 @@ public class LotteryBot extends TelegramLongPollingBot {
                 case ALREADY_DRAWN -> localizationService.get("already_drawn", groupLanguage);
                 case NOT_FOUND -> localizationService.get("lottery_not_found", groupLanguage);
             };
-            sendMarkdownMessage(groupId, groupResponse);
+            sendHtmlMessage(groupId, groupResponse);
         }
     }
 
@@ -1642,16 +1642,13 @@ public class LotteryBot extends TelegramLongPollingBot {
             for (int i = 0; i < winners.size(); i++) {
                 Participant w = winners.get(i);
                 sb.append(i + 1).append(". ");
-                if (w.getUsername() != null && !w.getUsername().isEmpty()) {
-                    sb.append("@" + w.getUsername());
-                } else {
-                    sb.append(w.getFullName());
-                }
+                String displayName = w.getUsername() != null && !w.getUsername().isEmpty() ? w.getUsername() : w.getFullName();
+                sb.append("<a href=\"tg://user?id=").append(w.getUserId()).append("\">").append(displayName).append("</a>");
                 sb.append("\n");
             }
         }
 
-        sb.append("\n_").append(localizationService.get("congratulations", language)).append("_");
+        sb.append("\n").append(localizationService.get("congratulations", language));
         return sb.toString();
     }
 
@@ -1766,16 +1763,16 @@ public class LotteryBot extends TelegramLongPollingBot {
         };
 
         String detailText = String.format("""
-                *🎁 抽奖详情*
+                <b>🎁 抽奖详情</b>
 
-                *ID:* %d
-                *标题:* %s
-                *奖品:* %s
-                *状态:* %s
-                *获奖名额:* %d人
-                *参与人数:* %d人
-                *开启时间:* %s
-                *截止时间:* %s
+                <b>ID:</b> %d
+                <b>标题:</b> %s
+                <b>奖品:</b> %s
+                <b>状态:</b> %s
+                <b>获奖名额:</b> %d人
+                <b>参与人数:</b> %d人
+                <b>开启时间:</b> %s
+                <b>截止时间:</b> %s
                 """,
                 lottery.getId(),
                 lottery.getTitle(),
@@ -1794,15 +1791,15 @@ public class LotteryBot extends TelegramLongPollingBot {
                     .collect(Collectors.toList());
 
             if (!winners.isEmpty()) {
-                detailText += "\n*🏆 中奖人:*\n";
+                detailText += "\n<b>🏆 中奖人:</b>\n";
                 for (Participant winner : winners) {
-                    String winnerName = winner.getUsername() != null ? "@" + winner.getUsername() : winner.getFullName();
-                    detailText += "• " + winnerName + "\n";
+                    String displayName = winner.getUsername() != null && !winner.getUsername().isEmpty() ? winner.getUsername() : winner.getFullName();
+                    detailText += "• <a href=\"tg://user?id=" + winner.getUserId() + "\">" + displayName + "</a>\n";
                 }
             }
 
              String prizeStatus = lottery.isPrizeDistributed() ? "✅ 已发放" : "❌ 未发放";
-             detailText += "\n*📦 奖项发放:* " + prizeStatus;
+             detailText += "\n<b>📦 奖项发放:</b> " + prizeStatus;
         }
 
         List<List<InlineKeyboardButton>> keyboard = new ArrayList<>();
@@ -1865,8 +1862,8 @@ public class LotteryBot extends TelegramLongPollingBot {
 
         SendMessage msg = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text(escapeMarkdown(detailText))
-                .parseMode(ParseMode.MARKDOWNV2)
+                .text(detailText)
+                .parseMode(ParseMode.HTML)
                 .replyMarkup(markup)
                 .build();
 
@@ -2412,6 +2409,19 @@ public class LotteryBot extends TelegramLongPollingBot {
         result = result.replace("{", "\\{");
         result = result.replace("}", "\\}");
         return result;
+    }
+
+    private void sendHtmlMessage(Long chatId, String text) {
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(text)
+                .parseMode(ParseMode.HTML)
+                .build();
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send message to chat {}: {}", chatId, e.getMessage());
+        }
     }
 
     // ==================== 会话模型 ====================

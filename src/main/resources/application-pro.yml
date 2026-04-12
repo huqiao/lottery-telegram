@@ -4,8 +4,6 @@
 spring:
   application:
     name: telegram-lottery-bot
-  profiles:
-    active: dev
   datasource:
     url: jdbc:h2:file:./lottery_db;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
@@ -22,6 +20,7 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
 # MySQL 生产环境配置（取消注释替换上方配置）
 # spring:
 #   datasource:
