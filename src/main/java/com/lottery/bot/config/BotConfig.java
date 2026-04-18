@@ -23,6 +23,7 @@ public class BotConfig {
     private Long adminGroupId;
     private String lotteryGroupIds;
     private String lotteryGroupLanguages;
+    private String lotteryGroupTimezones;
     private String language = "zh";
 
     public List<Long> getLotteryGroupIds() {
@@ -48,5 +49,37 @@ public class BotConfig {
             }
         }
         return language;
+    }
+
+    public String getGroupTimezone(Long groupId) {
+        if (lotteryGroupTimezones == null || lotteryGroupTimezones.isEmpty()) {
+            return "GMT+8";
+        }
+        String[] timezoneConfigs = lotteryGroupTimezones.split(",");
+        for (String config : timezoneConfigs) {
+            String[] parts = config.trim().split(":");
+            if (parts.length == 2 && Long.parseLong(parts[0].trim()) == groupId) {
+                return parts[1].trim();
+            }
+        }
+        return "GMT+8";
+    }
+
+    public java.time.ZoneId getGroupZoneId(Long groupId) {
+        String timezone = getGroupTimezone(groupId);
+        if (timezone.startsWith("GMT")) {
+            String offset = timezone.substring(3);
+            int hours = 0;
+            int minutes = 0;
+            if (offset.contains(":")) {
+                String[] parts = offset.split(":");
+                hours = Integer.parseInt(parts[0]);
+                minutes = Integer.parseInt(parts[1]);
+            } else {
+                hours = Integer.parseInt(offset);
+            }
+            return java.time.ZoneOffset.ofHoursMinutes(hours, minutes);
+        }
+        return java.time.ZoneId.of(timezone);
     }
 }

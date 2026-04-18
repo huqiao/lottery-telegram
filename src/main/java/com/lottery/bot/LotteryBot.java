@@ -1422,7 +1422,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         );
 
         String adminLanguage = botConfig.getGroupLanguage(session.chatId);
-        String announcement = buildLotteryAnnouncement(lottery, 0, adminLanguage);
+        String announcement = buildLotteryAnnouncement(lottery, 0, adminLanguage, session.chatId);
         InlineKeyboardMarkup keyboard = buildJoinKeyboard(lottery.getId(), adminLanguage);
 
         // 在管理群发送公告
@@ -1431,7 +1431,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         // 在所有抽奖群发送公告并置顶
         for (Long groupId : botConfig.getLotteryGroupIds()) {
             String groupLanguage = botConfig.getGroupLanguage(groupId);
-            String groupAnnouncement = buildLotteryAnnouncement(lottery, 0, groupLanguage);
+            String groupAnnouncement = buildLotteryAnnouncement(lottery, 0, groupLanguage, groupId);
             InlineKeyboardMarkup groupKeyboard = buildJoinKeyboard(lottery.getId(), groupLanguage);
             sendLotteryToGroup(groupId, groupAnnouncement, groupKeyboard, groupLanguage);
         }
@@ -1583,7 +1583,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         LotteryService.DrawResult result = lotteryService.drawLottery(lotteryId, null);
 
         String response = switch (result.status) {
-            case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, language);
+            case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, language, chatId);
             case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", language);
             case ALREADY_DRAWN -> localizationService.get("already_drawn", language);
             case NOT_FOUND -> localizationService.get("lottery_not_found", language);
@@ -1596,7 +1596,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         for (Long groupId : botConfig.getLotteryGroupIds()) {
             String groupLanguage = botConfig.getGroupLanguage(groupId);
             String groupResponse = switch (result.status) {
-                case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, groupLanguage);
+                case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, groupLanguage, groupId);
                 case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", groupLanguage);
                 case ALREADY_DRAWN -> localizationService.get("already_drawn", groupLanguage);
                 case NOT_FOUND -> localizationService.get("lottery_not_found", groupLanguage);
@@ -1628,12 +1628,16 @@ public class LotteryBot extends TelegramLongPollingBot {
         }
     }
 
-    private String buildDrawResultMessage(Lottery lottery, List<Participant> winners, String language) {
+    private String buildDrawResultMessage(Lottery lottery, List<Participant> winners, String language, Long groupId) {
         StringBuilder sb = new StringBuilder();
         sb.append(localizationService.get("draw_result_title", language)).append("\n\n");
         sb.append(localizationService.get("lottery_name", language)).append(lottery.getTitle()).append("\n");
         sb.append(localizationService.get("draw_prize", language)).append(lottery.getPrize()).append("\n");
-        sb.append(localizationService.get("draw_time", language)).append(lottery.getDrawnAt().format(FORMATTER)).append("\n\n");
+        sb.append(localizationService.get("draw_time", language)).append(
+                lottery.getDrawnAt().atZone(java.time.ZoneId.systemDefault())
+                        .withZoneSameInstant(botConfig.getGroupZoneId(groupId))
+                        .format(FORMATTER)
+        ).append("\n\n");
 
         if (winners.isEmpty()) {
             sb.append(localizationService.get("no_winners_text", language));
@@ -1959,7 +1963,7 @@ public class LotteryBot extends TelegramLongPollingBot {
     private void activateLotteryInAllGroups(Lottery lottery) {
         for (Long groupId : botConfig.getLotteryGroupIds()) {
             String language = botConfig.getGroupLanguage(groupId);
-            String announcement = buildLotteryAnnouncement(lottery, lotteryService.getParticipantCount(lottery.getId()), language);
+            String announcement = buildLotteryAnnouncement(lottery, lotteryService.getParticipantCount(lottery.getId()), language, groupId);
             InlineKeyboardMarkup keyboard = buildJoinKeyboard(lottery.getId(), language);
             sendLotteryToGroup(groupId, announcement, keyboard, language);
         }
@@ -2233,7 +2237,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         Lottery lottery = active.get();
         long count = lotteryService.getParticipantCount(lottery.getId());
         String language = botConfig.getGroupLanguage(chatId);
-        String announcement = buildLotteryAnnouncement(lottery, (int) count, language);
+        String announcement = buildLotteryAnnouncement(lottery, (int) count, language, chatId);
 
         SendMessage msg = SendMessage.builder()
                 .chatId(chatId.toString())
@@ -2310,8 +2314,12 @@ public class LotteryBot extends TelegramLongPollingBot {
 
     // ==================== 工具方法 ====================
 
-    private String buildLotteryAnnouncement(Lottery lottery, long participantCount, String language) {
-        String endTimeStr = lottery.getEndTime() != null ? lottery.getEndTime().format(FORMATTER) : localizationService.get("manual_draw", language);
+    private String buildLotteryAnnouncement(Lottery lottery, long participantCount, String language, Long groupId) {
+        String endTimeStr = lottery.getEndTime() != null ? 
+                lottery.getEndTime().atZone(java.time.ZoneId.systemDefault())
+                        .withZoneSameInstant(botConfig.getGroupZoneId(groupId))
+                        .format(FORMATTER) : 
+                localizationService.get("manual_draw", language);
         String title = localizationService.get("lottery_announcement", language,
                 lottery.getTitle(),
                 lottery.getPrize(),

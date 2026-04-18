@@ -36,10 +36,11 @@ telegram:
     token: 7120397071:AAHRfbEuFOUc65q7OBDO5hT4lzVEgmHzpt4       # 从 @BotFather 获取 8625264331:AAHHpJeKrJG7XNmrKxN4RFaoQfvWabRsa_o
     username: szebit_bot # 机器人用户名（不含@） pointlottery_robot
     admin-id: 8401649145  # 管理员 Telegram 用户 ID
-    admin-group-id: -5104092101  # 管理群 ID（创建抽奖等管理操作）
+    admin-group-id: -5174196716  # 管理群 ID（创建抽奖等管理操作）
     lottery-group-ids: -1003411668361,-5167719348  # 抽奖群 ID（多个用逗号分隔，如：-100123,-100456,-100789） -1003785052211
     language: zh                              # 默认语言
     lottery-group-languages: '-1003411668361:zh,-5104092101:en,-5167719348:uz'         # 各群语言设置（格式：群ID:语言） -1003785052211
+    lottery-group-timezones: '-1003411668361:GMT+8,-5104092101:GMT+8,-5167719348:GMT+5'  # 各群时区设置（格式：群ID:时区），默认GMT+8
 logging:
   level:
     root: INFO
