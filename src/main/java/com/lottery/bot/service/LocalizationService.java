@@ -16,7 +16,7 @@ public class LocalizationService {
 
     private void initTranslations() {
         Map<String, String> zh = new HashMap<>();
-        zh.put("lottery_announcement", "🎉 *新抽奖活动开始！*\n\n*标题:* %s\n*奖品:* %s\n*获奖名额:* %d人\n*截止时间:* %s\n\n点击下方按钮参与抽奖！");
+        zh.put("lottery_announcement", "🎉 *新抽奖活动开始！*\n\n*标题:* %s\n*奖品:* %s\n*获奖名额:* %d人\n*截止时间:* %s\n*说明:* %s\n\n点击下方按钮参与抽奖！");
         zh.put("join_success", "*已成功参与抽奖！* 🎉\n当前编号：%d");
         zh.put("join_already", "你已经参与过这次抽奖了，不可重复参与。");
         zh.put("join_ended", "该抽奖已结束，无法参与。");
@@ -37,6 +37,7 @@ public class LocalizationService {
         zh.put("join_error", "参与抽奖时发生错误，请稍后重试。");
         zh.put("draw_in_progress", "*正在开奖中... 请稍候*");
         zh.put("no_participants_draw", "没有人参与本次抽奖，抽奖结束。");
+        zh.put("no_eligible_participants", "⚠️ 所有参与者都曾经中过奖，无法开奖。");
         zh.put("already_drawn", "该抽奖已经开奖过了。");
         zh.put("lottery_not_found", "未找到该抽奖活动。");
         zh.put("draw_result_title", "*== 开奖结果公告 ==*");
@@ -49,7 +50,7 @@ public class LocalizationService {
         translations.put("zh", zh);
 
         Map<String, String> en = new HashMap<>();
-        en.put("lottery_announcement", "🎉 *New Lottery Started!*\n\n*Title:* %s\n*Prize:* %s\n*Winners:* %d\n*End Time:* %s\n\nClick the button below to join!");
+        en.put("lottery_announcement", "🎉 *New Lottery Started!*\n\n*Title:* %s\n*Prize:* %s\n*Winners:* %d\n*End Time:* %s\n*Description:* %s\n\nClick the button below to join!");
         en.put("join_success", "*Successfully joined the lottery!* 🎉\nYour number: %d");
         en.put("join_already", "You have already joined this lottery.");
         en.put("join_ended", "This lottery has ended.");
@@ -70,6 +71,7 @@ public class LocalizationService {
         en.put("join_error", "An error occurred while joining. Please try again later.");
         en.put("draw_in_progress", "*Drawing in progress... Please wait*");
         en.put("no_participants_draw", "No one participated in this lottery. Lottery ended.");
+        en.put("no_eligible_participants", "⚠️ All participants have won before, cannot draw.");
         en.put("already_drawn", "This lottery has already been drawn.");
         en.put("lottery_not_found", "Lottery not found.");
         en.put("draw_result_title", "*== Draw Results ==*");
@@ -82,7 +84,7 @@ public class LocalizationService {
         translations.put("en", en);
 
         Map<String, String> uz = new HashMap<>();
-        uz.put("lottery_announcement", "🎉 *Yangi Lottery Boshlandi!*\n\n*Nom:* %s\n*Mukofot:* %s dona g'olib\n*Muddati:* %s\n\nPastdagi tugmachani bosing!");
+        uz.put("lottery_announcement", "🎉 *Yangi Lottery Boshlandi!*\n\n*Nomi:* %s\n*Mukofot:* %s\n*G'oliblar soni:* %d kishi\n*Tugash vaqti:* %s\n\n*Tavsif:* %s\n\nPastdagi tugmachani bosing!");
         uz.put("join_success", "*Lotteryga muvaffaqiyatli qo'shildingiz!* 🎉\nSizning raqamingiz: %d");
         uz.put("join_already", "Siz allaqachon bu loteriyaga qo'shilgansiz.");
         uz.put("join_ended", "Bu lottery tugadi.");
@@ -103,6 +105,7 @@ public class LocalizationService {
         uz.put("join_error", "Xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.");
         uz.put("draw_in_progress", "*Chizish jarayoni... Iltimos kuting*");
         uz.put("no_participants_draw", "Bu lotteryda hech kim ishtirok etmadi. Lottery tugadi.");
+        uz.put("no_eligible_participants", "⚠️ Barcha ishtirokchilar avval g'olib bo'lgan, chizish mumkin emas.");
         uz.put("already_drawn", "Bu lottery allaqachon chizilgan.");
         uz.put("lottery_not_found", "Lottery topilmadi.");
         uz.put("draw_result_title", "*== Natijalar ==*");

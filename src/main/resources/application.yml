@@ -5,7 +5,7 @@ spring:
   application:
     name: telegram-lottery-bot
   profiles:
-    active: dev
+    active: pro
   datasource:
     url: jdbc:h2:file:./lottery_db;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver

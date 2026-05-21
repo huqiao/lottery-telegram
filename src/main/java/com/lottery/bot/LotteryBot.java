@@ -1585,6 +1585,7 @@ public class LotteryBot extends TelegramLongPollingBot {
         String response = switch (result.status) {
             case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, language, chatId);
             case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", language);
+            case NO_ELIGIBLE_PARTICIPANTS -> localizationService.get("no_eligible_participants", language);
             case ALREADY_DRAWN -> localizationService.get("already_drawn", language);
             case NOT_FOUND -> localizationService.get("lottery_not_found", language);
         };
@@ -1598,6 +1599,7 @@ public class LotteryBot extends TelegramLongPollingBot {
             String groupResponse = switch (result.status) {
                 case SUCCESS -> buildDrawResultMessage(result.lottery, result.winners, groupLanguage, groupId);
                 case NO_PARTICIPANTS -> localizationService.get("no_participants_draw", groupLanguage);
+                case NO_ELIGIBLE_PARTICIPANTS -> localizationService.get("no_eligible_participants", groupLanguage);
                 case ALREADY_DRAWN -> localizationService.get("already_drawn", groupLanguage);
                 case NOT_FOUND -> localizationService.get("lottery_not_found", groupLanguage);
             };
@@ -2324,7 +2326,7 @@ public class LotteryBot extends TelegramLongPollingBot {
                 lottery.getTitle(),
                 lottery.getPrize(),
                 lottery.getWinnerCount(),
-                endTimeStr);
+                endTimeStr,lottery.getDescription());
 
         StringBuilder sb = new StringBuilder();
         sb.append(title).append("\n\n");

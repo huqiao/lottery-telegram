@@ -3,6 +3,7 @@ package com.lottery.bot.repository;
 
 import com.lottery.bot.model.Participant;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -25,4 +26,8 @@ public interface ParticipantRepository extends JpaRepository<Participant, Long> 
 
     // 删除指定抽奖的所有参与者
     void deleteByLotteryId(Long lotteryId);
+
+    // 获取历史上中过奖的用户ID列表
+    @Query("SELECT DISTINCT p.userId FROM Participant p WHERE p.winner = true")
+    List<Long> findDistinctUserIdByWinnerTrue();
 }

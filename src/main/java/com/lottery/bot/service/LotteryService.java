@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -105,10 +106,23 @@ public class LotteryService {
             return new DrawResult(DrawStatus.NO_PARTICIPANTS, lottery, Collections.emptyList());
         }
 
+        // 获取历史上中过奖的用户ID列表
+        List<Long> pastWinnerIds = participantRepository.findDistinctUserIdByWinnerTrue();
+
+        // 过滤掉历史上中过奖的用户
+        List<Participant> eligibleParticipants = participants.stream()
+                .filter(p -> !pastWinnerIds.contains(p.getUserId()))
+                .collect(Collectors.toList());
+
+        if (eligibleParticipants.isEmpty()) {
+            log.warn("Lottery [{}] has no eligible participants (all past winners)", lotteryId);
+            return new DrawResult(DrawStatus.NO_ELIGIBLE_PARTICIPANTS, lottery, Collections.emptyList());
+        }
+
         // 随机抽取获奖者
-        int actualWinners = Math.min(lottery.getWinnerCount(), participants.size());
-        Collections.shuffle(participants, new SecureRandom());
-        List<Participant> winners = participants.subList(0, actualWinners);
+        int actualWinners = Math.min(lottery.getWinnerCount(), eligibleParticipants.size());
+        Collections.shuffle(eligibleParticipants, new SecureRandom());
+        List<Participant> winners = eligibleParticipants.subList(0, actualWinners);
 
         // 标记获奖者
         winners.forEach(w -> {
@@ -212,7 +226,7 @@ public class LotteryService {
     }
 
     public enum DrawStatus {
-        SUCCESS, NOT_FOUND, ALREADY_DRAWN, NO_PARTICIPANTS
+        SUCCESS, NOT_FOUND, ALREADY_DRAWN, NO_PARTICIPANTS, NO_ELIGIBLE_PARTICIPANTS
     }
 
     public static class DrawResult {
